@@ -33,9 +33,9 @@ from .noise import (
 )
 
 # Basic building blocks
-from .bounds import Bounds, BoundsD, BoundsI
+from .bounds import Bounds, BoundsD, BoundsI, _BoundsD, _BoundsI
 from .gsparams import GSParams
-from .position import Position, PositionD, PositionI
+from .position import Position, PositionD, PositionI, _PositionD, _PositionI
 from .angle import Angle, AngleUnit, _Angle, radians, hours, degrees, arcmin, arcsec
 
 # Image
@@ -105,3 +105,14 @@ from . import integ
 
 # this one is specific to jax_galsim
 from . import core
+
+# Chromatic profiles
+from .sed import SED
+from .bandpass import Bandpass
+from .chromatic import (
+    ChromaticObject,
+    SimpleChromaticTransformation,
+    ChromaticAtmosphere,
+    ChromaticConvolution,
+    ChromaticSum,
+)

@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 
+import equinox
 import galsim as _galsim
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ from jax.tree_util import register_pytree_node_class
 
 from jax_galsim.core.utils import (
     cast_numpy_array_to_native_byte_order,
-    cast_to_python_int,
+    cast_to_int,
     implements,
 )
 from jax_galsim.errors import (
@@ -91,19 +92,16 @@ class PhotonArray:
         _nokeep=None,
     ):
         self._Ntot = _JAX_GALSIM_PHOTON_ARRAY_SIZE or N
-        if _JAX_GALSIM_PHOTON_ARRAY_SIZE is not None:
-            try:
-                # this will raise a boolean conversion error in JAX
-                # which we swallow
-                err_cond = (N > _JAX_GALSIM_PHOTON_ARRAY_SIZE) or False
-            except Exception:
-                err_cond = False
+        self._Ntot = cast_to_int(self._Ntot)
 
-            if err_cond:
-                raise GalSimValueError(
-                    f"The given photon array size {N} is larger than "
-                    f"the allowed total size {_JAX_GALSIM_PHOTON_ARRAY_SIZE}."
-                )
+        if _JAX_GALSIM_PHOTON_ARRAY_SIZE is not None:
+            equinox.error_if(
+                jnp.array(N),
+                jnp.array(N > _JAX_GALSIM_PHOTON_ARRAY_SIZE),
+                f"The given photon array size {N} is larger than "
+                f"the allowed total size {_JAX_GALSIM_PHOTON_ARRAY_SIZE}.",
+            )
+
         if _nokeep is not None:
             self._nokeep = _nokeep
         else:
@@ -820,7 +818,7 @@ class PhotonArray:
         import numpy as np
 
         s = "galsim.PhotonArray(%r, x=array(%r), y=array(%r), flux=array(%r)" % (
-            cast_to_python_int(self.size()),
+            self.size(),
             np.array(self.x).tolist(),
             np.array(self.y).tolist(),
             np.array(self.flux).tolist(),
@@ -844,27 +842,31 @@ class PhotonArray:
         return s
 
     def __str__(self):
-        return "galsim.PhotonArray(%r)" % cast_to_python_int(self.size())
+        return "galsim.PhotonArray(%r)" % self.size()
 
     __hash__ = None
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, PhotonArray)
-            and jnp.array_equal(self.x, other.x)
-            and jnp.array_equal(self.y, other.y)
-            and jnp.array_equal(self.flux, other.flux)
-            and jnp.array_equal(self._nokeep, other._nokeep)
-            and jnp.array_equal(self.dxdz, other.dxdz, equal_nan=True)
-            and jnp.array_equal(self.dydz, other.dydz, equal_nan=True)
-            and jnp.array_equal(self.wavelength, other.wavelength, equal_nan=True)
-            and jnp.array_equal(self.pupil_u, other.pupil_u, equal_nan=True)
-            and jnp.array_equal(self.pupil_v, other.pupil_v, equal_nan=True)
-            and jnp.array_equal(self.time, other.time, equal_nan=True)
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, PhotonArray):
+            return (
+                jnp.array_equal(self.x, other.x)
+                & jnp.array_equal(self.y, other.y)
+                & jnp.array_equal(self.flux, other.flux)
+                & jnp.array_equal(self._nokeep, other._nokeep)
+                & jnp.array_equal(self.dxdz, other.dxdz, equal_nan=True)
+                & jnp.array_equal(self.dydz, other.dydz, equal_nan=True)
+                & jnp.array_equal(self.wavelength, other.wavelength, equal_nan=True)
+                & jnp.array_equal(self.pupil_u, other.pupil_u, equal_nan=True)
+                & jnp.array_equal(self.pupil_v, other.pupil_v, equal_nan=True)
+                & jnp.array_equal(self.time, other.time, equal_nan=True)
+            )
+        else:
+            return jnp.array(False)
 
     def __ne__(self, other):
-        return not self == other
+        return ~self.__eq__(other)
 
     @implements(
         _galsim.PhotonArray.addTo,

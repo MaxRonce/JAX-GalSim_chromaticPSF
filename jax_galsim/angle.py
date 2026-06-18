@@ -27,7 +27,6 @@ from jax.tree_util import register_pytree_node_class
 from jax_galsim.core.utils import (
     cast_to_float,
     ensure_hashable,
-    has_tracers,
     implements,
 )
 
@@ -55,7 +54,7 @@ class AngleUnit(object):
     def __init__(self, value):
         if isinstance(value, AngleUnit):
             raise TypeError("Cannot construct AngleUnit from another AngleUnit")
-        self._value = cast_to_float(value)
+        self._value = cast_to_float(value, accept_strings=True)
 
     @property
     @implements(_galsim.AngleUnit.value)
@@ -113,10 +112,13 @@ class AngleUnit(object):
             return "galsim.AngleUnit(%r)" % (ensure_hashable(self.value),)
 
     def __eq__(self, other):
-        return isinstance(other, AngleUnit) and jnp.array_equal(self.value, other.value)
+        if not isinstance(other, AngleUnit):
+            return jnp.array(False)
+        else:
+            return jnp.array_equal(self.value, other.value)
 
     def __ne__(self, other):
-        return not self.__eq__(other)
+        return ~self.__eq__(other)
 
     def __hash__(self):
         return hash(("galsim.AngleUnit", ensure_hashable(self.value)))
@@ -199,7 +201,7 @@ class Angle(object):
         return _Angle(self._rad - other._rad)
 
     def __mul__(self, other):
-        if not (has_tracers(other) or isinstance(other, NON_COMPLEX_TYPES)):
+        if isinstance(other, (Angle, AngleUnit)):
             raise TypeError(
                 "Cannot multiply Angle by %s of type %s" % (other, type(other))
             )
@@ -210,7 +212,7 @@ class Angle(object):
     def __div__(self, other):
         if isinstance(other, AngleUnit):
             return self._rad / other.value
-        elif has_tracers(other) or isinstance(other, NON_COMPLEX_TYPES):
+        elif not isinstance(other, Angle):
             return _Angle(self._rad / other)
         else:
             raise TypeError(
@@ -254,10 +256,13 @@ class Angle(object):
         return "galsim.Angle(%r, galsim.radians)" % (ensure_hashable(self.rad),)
 
     def __eq__(self, other):
-        return isinstance(other, Angle) and jnp.array_equal(self.rad, other.rad)
+        if not isinstance(other, Angle):
+            return jnp.array(False)
+        else:
+            return jnp.array_equal(self.rad, other.rad)
 
     def __ne__(self, other):
-        return not self.__eq__(other)
+        return ~self.__eq__(other)
 
     def __le__(self, other):
         if not isinstance(other, Angle):

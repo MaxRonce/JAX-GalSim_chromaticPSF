@@ -1,15 +1,24 @@
 import galsim as _galsim
+import jax
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
 from jax_galsim.core.utils import (
-    compute_major_minor_from_jacobian,
     ensure_hashable,
     implements,
 )
 from jax_galsim.gsobject import GSObject
 from jax_galsim.gsparams import GSParams
 from jax_galsim.position import PositionD
+
+
+@jax.jit
+def _compute_major_minor_from_jacobian(jac):
+    h1 = jnp.hypot(jac[0, 0] + jac[1, 1], jac[0, 1] - jac[1, 0])
+    h2 = jnp.hypot(jac[0, 0] - jac[1, 1], jac[0, 1] + jac[1, 0])
+    major = 0.5 * jnp.abs(h1 + h2)
+    minor = 0.5 * jnp.abs(h1 - h2)
+    return major, minor
 
 
 @implements(
@@ -149,15 +158,22 @@ class Transformation(GSObject):
         return self.tree_unflatten(aux, chld)
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, Transformation)
-            and self._original == other._original
-            and jnp.array_equal(self._jac, other._jac)
-            and self._offset == other._params["offset"]
-            and self._flux_ratio == other._flux_ratio
-            and self._gsparams == other._gsparams
-            and self._propagate_gsparams == other._propagate_gsparams
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, Transformation):
+            return (
+                jnp.array(self._original == other._original)
+                & jnp.array_equal(self._jac, other._jac)
+                & jnp.array(self._offset == other._params["offset"])
+                & jnp.array_equal(self._flux_ratio, other._flux_ratio)
+                & jnp.array(self._gsparams == other._gsparams)
+                & jnp.array(self._propagate_gsparams == other._propagate_gsparams)
+            )
+        else:
+            return jnp.array(False)
+
+    def __ne__(self, other):
+        return ~self.__eq__(other)
 
     def __hash__(self):
         return hash(
@@ -277,12 +293,12 @@ class Transformation(GSObject):
 
     @property
     def _maxk(self):
-        _, minor = compute_major_minor_from_jacobian(self._jac)
+        _, minor = _compute_major_minor_from_jacobian(self._jac)
         return self._original.maxk / minor
 
     @property
     def _stepk(self):
-        major, _ = compute_major_minor_from_jacobian(self._jac)
+        major, _ = _compute_major_minor_from_jacobian(self._jac)
         stepk = self._original.stepk / major
         # If we have a shift, we need to further modify stepk
         #     stepk = Pi/R

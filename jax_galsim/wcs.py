@@ -1,16 +1,44 @@
 import galsim as _galsim
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.tree_util import register_pytree_node_class
 
 from jax_galsim.angle import AngleUnit, arcsec, radians
 from jax_galsim.celestial import CelestialCoord
-from jax_galsim.core.utils import cast_to_python_float, ensure_hashable, implements
+from jax_galsim.core.utils import (
+    STATIC_SCALAR_TYPES,
+    cast_to_float,
+    ensure_hashable,
+    implements,
+)
 from jax_galsim.errors import GalSimValueError
 from jax_galsim.gsobject import GSObject
 from jax_galsim.position import Position, PositionD, PositionI
 from jax_galsim.shear import Shear
 from jax_galsim.transform import _Transform
+
+
+# this function casts input values to python numeric values
+# this kind of casting is only done for writing FITS headers
+# and should never be done anywhere else in the code base
+def _cast_to_static_numeric_scalar(x, msg=None):
+    if isinstance(x, STATIC_SCALAR_TYPES):
+        return x
+
+    if isinstance(x, (np.ndarray, jax.Array, jnp.ndarray)):
+        if x.ndim == 0:
+            return x.item()
+
+        if all(sv == 1 for sv in x.shape):
+            return x.ravel()[0].item()
+
+    msg = msg or f"Cannot convert input {x!r} to a static, numeric scalar."
+    raise RuntimeError(msg)
+
+
+def _cast_to_python_float(x):
+    return cast_to_float(_cast_to_static_numeric_scalar(x))
 
 
 # We inherit from the reference BaseWCS and only redefine the methods that
@@ -529,7 +557,7 @@ class EuclideanWCS(BaseWCS):
 
     # Each class should define the __eq__ function.  Then __ne__ is obvious.
     def __ne__(self, other):
-        return not self.__eq__(other)
+        return ~self.__eq__(other)
 
 
 @implements(_galsim.wcs.UniformWCS)
@@ -571,12 +599,16 @@ class UniformWCS(EuclideanWCS):
 
     # Just check if the locals match and if the origins match.
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, self.__class__)
-            and self._local_wcs == other._local_wcs
-            and self.origin == other.origin
-            and self.world_origin == other.world_origin
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, self.__class__):
+            return (
+                jnp.array(self._local_wcs == other._local_wcs)
+                & jnp.array(self.origin == other.origin)
+                & jnp.array(self.world_origin == other.world_origin)
+            )
+        else:
+            return jnp.array(False)
 
 
 @implements(_galsim.wcs.LocalWCS)
@@ -800,7 +832,7 @@ class CelestialWCS(BaseWCS):
 
     # Each class should define the __eq__ function.  Then __ne__ is obvious.
     def __ne__(self, other):
-        return not self.__eq__(other)
+        return ~self.__eq__(other)
 
 
 #########################################################################################
@@ -910,7 +942,7 @@ class PixelScale(LocalWCS):
 
     def _writeHeader(self, header, bounds):
         header["GS_WCS"] = ("PixelScale", "GalSim WCS name")
-        header["GS_SCALE"] = (cast_to_python_float(self.scale), "GalSim image scale")
+        header["GS_SCALE"] = (_cast_to_python_float(self.scale), "GalSim image scale")
         return self.affine()._writeLinearWCS(header, bounds)
 
     @staticmethod
@@ -925,9 +957,12 @@ class PixelScale(LocalWCS):
         return PixelScale(self._scale)
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, PixelScale) and self.scale == other.scale
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, PixelScale):
+            return jnp.array_equal(self.scale, other.scale)
+        else:
+            return jnp.array(False)
 
     def __repr__(self):
         return "galsim.PixelScale(%r)" % (ensure_hashable(self.scale),)
@@ -1032,9 +1067,15 @@ class ShearWCS(LocalWCS):
 
     def _writeHeader(self, header, bounds):
         header["GS_WCS"] = ("ShearWCS", "GalSim WCS name")
-        header["GS_SCALE"] = (cast_to_python_float(self.scale), "GalSim image scale")
-        header["GS_G1"] = (cast_to_python_float(self.shear.g1), "GalSim image shear g1")
-        header["GS_G2"] = (cast_to_python_float(self.shear.g2), "GalSim image shear g2")
+        header["GS_SCALE"] = (_cast_to_python_float(self.scale), "GalSim image scale")
+        header["GS_G1"] = (
+            _cast_to_python_float(self.shear.g1),
+            "GalSim image shear g1",
+        )
+        header["GS_G2"] = (
+            _cast_to_python_float(self.shear.g2),
+            "GalSim image shear g2",
+        )
         return self.affine()._writeLinearWCS(header, bounds)
 
     @implements(_galsim.wcs.ShearWCS.copy)
@@ -1042,11 +1083,14 @@ class ShearWCS(LocalWCS):
         return ShearWCS(self._scale, self._shear)
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, ShearWCS)
-            and self.scale == other.scale
-            and self.shear == other.shear
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, ShearWCS):
+            return jnp.array(self.scale == other.scale) & jnp.array(
+                self.shear == other.shear
+            )
+        else:
+            return jnp.array(False)
 
     def __repr__(self):
         return "galsim.ShearWCS(%r, %r)" % (ensure_hashable(self.scale), self.shear)
@@ -1248,13 +1292,17 @@ class JacobianWCS(LocalWCS):
         return JacobianWCS(self.dudx, self.dudy, self.dvdx, self.dvdy)
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, JacobianWCS)
-            and self.dudx == other.dudx
-            and self.dudy == other.dudy
-            and self.dvdx == other.dvdx
-            and self.dvdy == other.dvdy
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, JacobianWCS):
+            return (
+                jnp.array_equal(self.dudx, other.dudx)
+                & jnp.array_equal(self.dudy, other.dudy)
+                & jnp.array_equal(self.dvdx, other.dvdx)
+                & jnp.array_equal(self.dvdy, other.dvdy)
+            )
+        else:
+            return jnp.array(False)
 
     def __repr__(self):
         return "galsim.JacobianWCS(%r, %r, %r, %r)" % (
@@ -1326,15 +1374,21 @@ class OffsetWCS(UniformWCS):
 
     def _writeHeader(self, header, bounds):
         header["GS_WCS"] = ("OffsetWCS", "GalSim WCS name")
-        header["GS_SCALE"] = (cast_to_python_float(self.scale), "GalSim image scale")
-        header["GS_X0"] = (cast_to_python_float(self.origin.x), "GalSim image origin x")
-        header["GS_Y0"] = (cast_to_python_float(self.origin.y), "GalSim image origin y")
+        header["GS_SCALE"] = (_cast_to_python_float(self.scale), "GalSim image scale")
+        header["GS_X0"] = (
+            _cast_to_python_float(self.origin.x),
+            "GalSim image origin x",
+        )
+        header["GS_Y0"] = (
+            _cast_to_python_float(self.origin.y),
+            "GalSim image origin y",
+        )
         header["GS_U0"] = (
-            cast_to_python_float(self.world_origin.x),
+            _cast_to_python_float(self.world_origin.x),
             "GalSim world origin u",
         )
         header["GS_V0"] = (
-            cast_to_python_float(self.world_origin.y),
+            _cast_to_python_float(self.world_origin.y),
             "GalSim world origin v",
         )
         return self.affine()._writeLinearWCS(header, bounds)
@@ -1404,23 +1458,29 @@ class OffsetShearWCS(UniformWCS):
 
     def _writeHeader(self, header, bounds):
         header["GS_WCS"] = ("OffsetShearWCS", "GalSim WCS name")
-        header["GS_SCALE"] = (cast_to_python_float(self.scale), "GalSim image scale")
-        header["GS_G1"] = (cast_to_python_float(self.shear.g1), "GalSim image shear g1")
-        header["GS_G2"] = (cast_to_python_float(self.shear.g2), "GalSim image shear g2")
+        header["GS_SCALE"] = (_cast_to_python_float(self.scale), "GalSim image scale")
+        header["GS_G1"] = (
+            _cast_to_python_float(self.shear.g1),
+            "GalSim image shear g1",
+        )
+        header["GS_G2"] = (
+            _cast_to_python_float(self.shear.g2),
+            "GalSim image shear g2",
+        )
         header["GS_X0"] = (
-            cast_to_python_float(self.origin.x),
+            _cast_to_python_float(self.origin.x),
             "GalSim image origin x coordinate",
         )
         header["GS_Y0"] = (
-            cast_to_python_float(self.origin.y),
+            _cast_to_python_float(self.origin.y),
             "GalSim image origin y coordinate",
         )
         header["GS_U0"] = (
-            cast_to_python_float(self.world_origin.x),
+            _cast_to_python_float(self.world_origin.x),
             "GalSim world origin u coordinate",
         )
         header["GS_V0"] = (
-            cast_to_python_float(self.world_origin.y),
+            _cast_to_python_float(self.world_origin.y),
             "GalSim world origin v coordinate",
         )
         return self.affine()._writeLinearWCS(header, bounds)
@@ -1504,25 +1564,25 @@ class AffineTransform(UniformWCS):
         header["CTYPE1"] = ("LINEAR", "name of the world coordinate axis")
         header["CTYPE2"] = ("LINEAR", "name of the world coordinate axis")
         header["CRVAL1"] = (
-            cast_to_python_float(self.u0),
+            _cast_to_python_float(self.u0),
             "world coordinate at reference pixel = u0",
         )
         header["CRVAL2"] = (
-            cast_to_python_float(self.v0),
+            _cast_to_python_float(self.v0),
             "world coordinate at reference pixel = v0",
         )
         header["CRPIX1"] = (
-            cast_to_python_float(self.x0),
+            _cast_to_python_float(self.x0),
             "image coordinate of reference pixel = x0",
         )
         header["CRPIX2"] = (
-            cast_to_python_float(self.y0),
+            _cast_to_python_float(self.y0),
             "image coordinate of reference pixel = y0",
         )
-        header["CD1_1"] = (cast_to_python_float(self.dudx), "CD1_1 = dudx")
-        header["CD1_2"] = (cast_to_python_float(self.dudy), "CD1_2 = dudy")
-        header["CD2_1"] = (cast_to_python_float(self.dvdx), "CD2_1 = dvdx")
-        header["CD2_2"] = (cast_to_python_float(self.dvdy), "CD2_2 = dvdy")
+        header["CD1_1"] = (_cast_to_python_float(self.dudx), "CD1_1 = dudx")
+        header["CD1_2"] = (_cast_to_python_float(self.dudy), "CD1_2 = dudy")
+        header["CD2_1"] = (_cast_to_python_float(self.dvdx), "CD2_1 = dvdx")
+        header["CD2_2"] = (_cast_to_python_float(self.dvdy), "CD2_2 = dvdy")
         return header
 
     @staticmethod

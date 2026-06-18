@@ -11,7 +11,7 @@ from jax_galsim.photon_array import PhotonArray
 
 @implements(
     _galsim.Convolve,
-    lax_description="""Does not support ChromaticConvolutions""",
+    lax_description="""Supports ChromaticConvolutions for FFT drawing only.""",
 )
 def Convolve(*args, **kwargs):
     if len(args) == 0:
@@ -27,6 +27,11 @@ def Convolve(*args, **kwargs):
                 + "or a (possibly mixed) list of them."
             )
     # else args is already the list of objects
+
+    from jax_galsim.chromatic import ChromaticConvolution, ChromaticObject
+
+    if any(isinstance(obj, ChromaticObject) for obj in args):
+        return ChromaticConvolution(args, **kwargs)
 
     return Convolution(*args, **kwargs)
 
@@ -162,13 +167,20 @@ class Convolution(GSObject):
         return ret
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, Convolution)
-            and self.obj_list == other.obj_list
-            and self.real_space == other.real_space
-            and self.gsparams == other.gsparams
-            and self._propagate_gsparams == other._propagate_gsparams
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, Convolution):
+            return (
+                jnp.array(self.obj_list == other.obj_list)
+                & jnp.array(self.real_space == other.real_space)
+                & jnp.array(self.gsparams == other.gsparams)
+                & jnp.array(self._propagate_gsparams == other._propagate_gsparams)
+            )
+        else:
+            return jnp.array(False)
+
+    def __ne__(self, other):
+        return ~self.__eq__(other)
 
     def __hash__(self):
         return hash(
@@ -403,12 +415,19 @@ class Deconvolution(GSObject):
         return ret
 
     def __eq__(self, other):
-        return self is other or (
-            isinstance(other, Deconvolution)
-            and self.orig_obj == other.orig_obj
-            and self.gsparams == other.gsparams
-            and self._propagate_gsparams == other._propagate_gsparams
-        )
+        if self is other:
+            return jnp.array(True)
+        elif isinstance(other, Deconvolution):
+            return (
+                jnp.array(self.orig_obj == other.orig_obj)
+                & jnp.array(self.gsparams == other.gsparams)
+                & jnp.array(self._propagate_gsparams == other._propagate_gsparams)
+            )
+        else:
+            return jnp.array(False)
+
+    def __ne__(self, other):
+        return ~self.__eq__(other)
 
     def __hash__(self):
         return hash(
